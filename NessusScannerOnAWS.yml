@@ -1,0 +1,221 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Metadata: 
+  AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - Label: 
+          default: "Tenable Configuration"
+        Parameters:
+          - ScannerName
+          - LinkingKey
+      - Label: 
+          default: "EC2 Configuration"
+        Parameters: 
+          - InstanceType
+Parameters:
+  ScannerName:
+      Description: Tenable Scanner Name
+      Default: AWS_Sccaner
+      Type: String
+  LinkingKey:
+      Description: Tenable Linking Key
+      Type: String
+  InstanceType: 
+    Type: String
+    Description: Nessus Sccaner Instance Type
+    Default: m4.large
+    AllowedValues: 
+      - t2.medium
+      - t2.large
+      - m4.large
+      - m4.xlarge
+      - m4.2xlarge
+      - m4.4xlarge
+      - m4.10xlarge
+      - m4.16xlarge
+    Description: Enter t2.medium, t2.large, or m4 Family. Default is m4.large.
+Resources:
+  IamRole1:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+      RoleName: NessusScannerRole
+  IamInstanceProfile1:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref IamRole1
+      InstanceProfileName: NessusScannerRole
+  Vpc01:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: tenable-vpc
+  InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: Name
+          Value: tenable-igw
+  AttachIGW:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      VpcId: !Ref Vpc01
+      InternetGatewayId: !Ref InternetGateway
+  NetworkAcl01:
+    Type: "AWS::EC2::NetworkAcl"
+    Properties:
+      Tags:
+        - Key: Name
+          Value: tenable-nacl
+      VpcId: !Ref Vpc01
+  NetworkAclEntryEgressTrue01:
+    Type: "AWS::EC2::NetworkAclEntry"
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: true
+      NetworkAclId: !Ref NetworkAcl01
+      Protocol: -1
+      RuleAction : allow
+      RuleNumber : 100
+  NetworkAclEntryEgressFalse01:
+    Type: "AWS::EC2::NetworkAclEntry"
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: false
+      NetworkAclId: !Ref NetworkAcl01
+      Protocol: -1
+      RuleAction : allow
+      RuleNumber : 100
+  RouteTable01:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref Vpc01
+      Tags:
+        - Key: Name
+          Value: tenable-public-rtb
+  RouteIGW01:
+    Type: "AWS::EC2::Route"
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref RouteTable01
+  Subnet01:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref Vpc01
+      AvailabilityZone: ap-northeast-1a
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: tenable-subnet-a
+  Subnet02:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref Vpc01
+      AvailabilityZone: ap-northeast-1c
+      CidrBlock: 10.0.2.0/24
+      Tags:
+        - Key: Name
+          Value: tenable-subnet-c
+  SubnetRouteTableAssociation01:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref Subnet01
+      RouteTableId: !Ref RouteTable01
+  SubnetNetworkAclAssociation01:
+    Type: "AWS::EC2::SubnetNetworkAclAssociation"
+    Properties:
+      SubnetId: !Ref Subnet01
+      NetworkAclId: !Ref NetworkAcl01
+  SubnetRouteTableAssociation02:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref Subnet02
+      RouteTableId: !Ref RouteTable01
+  SubnetNetworkAclAssociation02:
+    Type: "AWS::EC2::SubnetNetworkAclAssociation"
+    Properties:
+      SubnetId: !Ref Subnet02
+      NetworkAclId: !Ref NetworkAcl01
+  SecurityGroup01:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      VpcId: !Ref Vpc01
+      GroupName: NessusSccaner-Sg
+      GroupDescription: Nessus Sccaner
+      Tags:
+        - Key: Name
+          Value: NessusSccaner-Sg
+  SecurityGroup02:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      VpcId: !Ref Vpc01
+      GroupName: TargetServer-Sg
+      GroupDescription: Target Server
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '0'
+          ToPort: '65535'
+          SourceSecurityGroupId: !Ref SecurityGroup01
+        - IpProtocol: udp
+          FromPort: '0'
+          ToPort: '65535'
+          SourceSecurityGroupId: !Ref SecurityGroup01
+        - IpProtocol: icmp
+          FromPort: '-1'
+          ToPort: '-1'
+          SourceSecurityGroupId: !Ref SecurityGroup01
+      Tags:
+        - Key: Name
+          Value: TargetServer-Sg
+  EC201:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      AvailabilityZone: ap-northeast-1a
+      ImageId: ami-b2ec3dcd
+      InstanceType: !Ref InstanceType
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            VolumeSize: 30
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref SecurityGroup01
+          SubnetId: !Ref Subnet01
+      IamInstanceProfile: !Ref IamInstanceProfile1
+      UserData:
+        Fn::Base64: !Sub |
+          {
+            "name": "${ScannerName}",
+            "key": "${LinkingKey}",
+            "iam_role": "${IamRole1}"
+          }
+      Tags:
+        - Key: Name
+          Value: NessusSccaner
+
+
+
+
+
+
+
